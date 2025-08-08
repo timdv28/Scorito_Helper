@@ -10,7 +10,6 @@ import sys
 from sqlalchemy import create_engine, text
 from sqlalchemy.types import String, Integer
 
-
 def get_startlist(race, year):
     if race == 'tour':
         race_insert = 'tour-de-france'
@@ -23,115 +22,60 @@ def get_startlist(race, year):
 
     number_of_riders = len(rs['startlist'])
     source_columns = ['rider_name','team_name','rider_url','team_url']
-    frame_columns = ['rider_id','rider_name','team_name','rider_url','team_url']
-    rider_id = 20250000
-    
+    frame_columns = ['rider_id','short_name','scorito_price','rider_name','team_name','rider_url','team_url']
+    rider_id = 10000
     startlist = pd.DataFrame(columns=frame_columns)
+    
     for i in range(number_of_riders):
         rider_entry = rs['startlist'][i]
-        rider_id += 1 
-        li = [rider_id]
+        rider_id += 1
         
+        # Create a column with shortened names (last name and first initial). The last letter is always an initial, so we need to add a dot at the end of the string
+        upper_case = rider_entry['rider_name'].isupper()
+        upper_case = ''.join([c for c in rider_entry['rider_name'] if c.isupper() or c.isspace()]) + '.'
+        
+        # Dot all extra initials, if there are any
+        for i in range(len(upper_case)):
+            if upper_case[i].isupper() and upper_case[i+1].isspace():
+                if upper_case[i-1].isspace():
+                    short_name = upper_case[:i+1] + '.' + upper_case[i+2:]
+                else:
+                    short_name = upper_case
+        
+        rider_price = get_rider_price(rider_id)
+        
+        # Make a list, which is a row of extra info to be added to the dataframe
+        li = [rider_id,short_name,rider_price]
         for k in source_columns:
             li.append(rider_entry[k])
 
         frame = pd.DataFrame([li], columns=frame_columns)
         startlist = pd.concat([startlist, frame], ignore_index=True)
+        
+    startlist.replace(-1,None,inplace=True)
     return startlist
-
 
 def get_rider_info(startlist):
     url_list = startlist['rider_url'].to_list()
     source_columns = ['climber','gc','hills','one_day_races','sprint','time_trial']
     
+    # Get the general PCS specialisation points
     spec_points = pd.DataFrame(columns=source_columns)
-    
     for u in url_list:
         rider_points = Rider(u).points_per_speciality()  
         df = pd.DataFrame([rider_points])
-        
         spec_points = pd.concat([spec_points, df], ignore_index=True)
-    
     return spec_points
 
-def get_latest_results(startlist,race,year,rider_url):
-    if race == 'tour':
-        race_insert = 'tour-de-france'
-    elif race == 'giro':
-        race_insert = 'giro-d-italia'
-    elif race == 'vuelta':
-        race_insert = 'vuelta-a-espana'
-    
-    # Define the weights of different race classes
-    class_weights = pd.DataFrame([[1,1,0.8,0.8,0.6,0.6,0.5,0.5]],columns=['2.UWT','1.UWT','2.Pro','1.Pro','2.1','1.1','2.2','1.2'])
-    max_startlist_quality_score = 2275
-    
-    rider = 'richard-carapaz'
-    rider_results = RiderResults(f"rider/{rider}/results").results()
-    
-    pcs_gt_point_sum, pcs_stage_point_sum, uci_gt_point_sum, uci_stage_point_sum, startlist_quality_score_sum = [0] * 5
-    stage_count = 0
-    pcs_points_profile = {'p0': 0, 
-                          'p1': 0,
-                          'p2': 0, 
-                          'p3': 0,
-                          'p4': 0, 
-                          'p5': 0}
-    
-    uci_points_profile = {'p0': 0, 
-                          'p1': 0,
-                          'p2': 0, 
-                          'p3': 0,
-                          'p4': 0, 
-                          'p5': 0}
-    
-    # Loop over the last 100 races of the current rider
-    for i in range(len(rider_results)): # len(rider_results)
-        # Get different parameters of the selected race
-        cl = rider_results[i]['class']
-        weight = class_weights[cl]
-        
-        # Scrape Stage info
-        stage_url = rider_results[i]['stage_url']
-        stage = Stage(stage_url)
-        profile = stage.profile_icon()
-        profile_score = stage.profile_score()
-        stage_type = stage.stage_type()
-        is_one_day_race = stage.is_one_day_race()
-        startlist_quality_score = stage.race_startlist_quality_score()
-        
-        # Get Rider results info
-        finish_rank = rider_results[i]['rank']
-        pcs_points = rider_results[i]['pcs_points']
-        uci_points = rider_results[i]['uci_points']
-        
-        # When 'final_classification' == True, the points awarded are counted towards the GT points
-        
-        if rider_results[i]['distance'] != None:
-            stage_count += 1
-            final_classification = False
-            pcs_stage_point_sum += pcs_points
-            uci_stage_point_sum+= uci_points
-            startlist_quality_score_sum += startlist_quality_score 
-            
-            pcs_points_profile[profile] += pcs_points
-            uci_points_profile[profile] += uci_points
-            startlist_quality_score_avg = startlist_quality_score_sum/stage_count
-
-        else:
-            final_classification = True
-            pcs_gt_point_sum += pcs_points
-            uci_gt_point_sum+= uci_points
-        
-        # Sums and averages
-        
-        
-        row = [stage_url,cl,profile,profile_score,stage_type,is_one_day_race,startlist_quality_score,final_classification,finish_rank]
-        
-    sums_and_averages = [pcs_gt_point_sum, pcs_stage_point_sum, uci_gt_point_sum, uci_stage_point_sum,
-                         round(startlist_quality_score_avg,1)]
-    print(sums_and_averages)           
-    return sums_and_averages
+def get_rider_price(rider_id):
+    price_table = pd.read_excel("/mnt/c/Users/timdv/OneDrive/Documenten/scorito_vuelta2025_price_table.xlsx")
+    try:
+        price = price_table.loc[price_table['rider_id']==rider_id]['scorito_price'].iloc[0]
+    except:
+        price = None
+        print('Warning: Rider not found in price_table, it might need an update')
+        pass
+    return price
 
 def upload_to_postgres(table_name,df):
     user = os.getenv("DB_USER", "admin")
@@ -139,22 +83,27 @@ def upload_to_postgres(table_name,df):
     host = os.getenv("DB_HOST", "localhost")
     port = os.getenv("DB_PORT", "5432")
     database = os.getenv("DB_NAME", "postgres")
-
-    # columns = {
-    #     "rider_id": String,
-    #     "rider_name": String,
-    #     "team_name": Integer,
-    #     "rider_url": String,
-    #     "team_url": String,
-    #     "climber_spec": Integer,
-    #     "gc_spec": Integer,
-    #     "hills_spec": Integer,
-    #     "odr_spec": Integer,
-    #     "sprint_spec": Integer,
-    #     "tt_spec": Integer,
-    # }
+    
+    # Change -1 values to NaN
+    df.replace(-1,None,inplace=True)
     
     engine = create_engine(f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}')
     df.to_sql(name=table_name, con=engine, if_exists='replace', index=False)
+   
+def load_from_postgres(table_name):
+    user = os.getenv("DB_USER", "admin")
+    password = os.getenv("DB_PASSWORD", "admin")
+    host = os.getenv("DB_HOST", "localhost")
+    port = os.getenv("DB_PORT", "5432")
+    database = os.getenv("DB_NAME", "postgres")
     
-    print(f"Created {table_name} with {df.shape[0]} entries")
+    engine = create_engine(f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}')
+    df = pd.read_sql_table(table_name, con=engine)
+    
+    return df
+
+if __name__ == '__main__':
+    rider_id = 101345
+    price = get_rider_price(rider_id)
+    print(price)
+    
