@@ -28,11 +28,13 @@ def get_startlist(race, year):
     
     for i in range(number_of_riders):
         rider_entry = rs['startlist'][i]
+        rider_url = rider_entry['rider_url']
         rider_id += 1
         
         # Create a column with shortened names (last name and first initial). The last letter is always an initial, so we need to add a dot at the end of the string
         upper_case = rider_entry['rider_name'].isupper()
         upper_case = ''.join([c for c in rider_entry['rider_name'] if c.isupper() or c.isspace()]) + '.'
+        upper_case = upper_case.replace('-',' ')
         
         # Dot all extra initials, if there are any
         for i in range(len(upper_case)):
@@ -41,8 +43,9 @@ def get_startlist(race, year):
                     short_name = upper_case[:i+1] + '.' + upper_case[i+2:]
                 else:
                     short_name = upper_case
+            
         
-        rider_price = get_rider_price(rider_id)
+        rider_price = get_rider_price(rider_entry,rider_url,short_name)
         
         # Make a list, which is a row of extra info to be added to the dataframe
         li = [rider_id,short_name,rider_price]
@@ -67,13 +70,27 @@ def get_rider_info(startlist):
         spec_points = pd.concat([spec_points, df], ignore_index=True)
     return spec_points
 
-def get_rider_price(rider_id):
-    price_table = pd.read_excel("/mnt/c/Users/timdv/OneDrive/Documenten/scorito_vuelta2025_price_table.xlsx")
+def get_rider_price(rider_entry,rider_url,short_name):
+    cols = ['short_name','team_name','rider_url','scorito_price']
+    price_table = pd.read_excel("/mnt/c/Users/timdv/OneDrive/Documenten/Scorito/scorito_vuelta2025_price_table.xlsx",usecols=cols)
+    # print(price_table.loc[price_table['rider_id']==rider_id]['scorito_price'])
     try:
-        price = price_table.loc[price_table['rider_id']==rider_id]['scorito_price'].iloc[0]
+        price = price_table.loc[price_table['rider_url']==rider_url]['scorito_price'].iloc[0]
     except:
         price = None
-        print('Warning: Rider not found in price_table, it might need an update')
+        print(f'Warning: Rider {short_name} not found in price_table')
+        print(f'Rider entry added in the price table without a price')
+        
+        new_rider_url = rider_entry['rider_url']
+        new_short_name = short_name
+        new_team_name = rider_entry['team_name']
+        new_price = -1
+        print(price_table.columns)
+        new_row = pd.DataFrame([[new_short_name, new_team_name, new_rider_url, new_price]], columns=cols)
+        new_price_table = price_table._append(new_row, ignore_index=True)
+        
+        new_price_table.to_excel("/mnt/c/Users/timdv/OneDrive/Documenten/Scorito/scorito_vuelta2025_price_table.xlsx")
+        
         pass
     return price
 
@@ -90,7 +107,7 @@ def upload_to_postgres(table_name,df):
     engine = create_engine(f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}')
     df.to_sql(name=table_name, con=engine, if_exists='replace', index=False)
    
-def load_from_postgres(table_name):
+def load_from_postgres(table_name,query=None):
     user = os.getenv("DB_USER", "admin")
     password = os.getenv("DB_PASSWORD", "admin")
     host = os.getenv("DB_HOST", "localhost")
@@ -98,12 +115,14 @@ def load_from_postgres(table_name):
     database = os.getenv("DB_NAME", "postgres")
     
     engine = create_engine(f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}')
-    df = pd.read_sql_table(table_name, con=engine)
+    df = pd.read_sql_table(table_name, con=engine, schema=query)
     
     return df
 
 if __name__ == '__main__':
-    rider_id = 101345
-    price = get_rider_price(rider_id)
-    print(price)
+    rs = RaceStartlist(f"race/vuelta-a-espana/2025/startlist").parse()
+    
+    startlist = get_startlist('vuelta', 2025)
+    
+    
     
