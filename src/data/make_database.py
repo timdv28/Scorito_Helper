@@ -7,9 +7,10 @@ import time
 from datetime import datetime
 
 # Own created functions
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..','..', 'src'))
 from features.get_startlist import get_startlist, get_rider_info, upload_to_postgres, load_from_postgres
 from features.get_latest_results import get_latest_results
+from features.update_stages import update_stages_table
 
 def main():
     race = 'vuelta'
@@ -20,12 +21,12 @@ def main():
 
     startlist = get_startlist(race, year)
     table_size_dict['riders'] = startlist.shape[0]
-    # spec_points = get_rider_info(startlist)   
+    spec_points = get_rider_info(startlist)   
 
-    # # Add the Procyclingstats specialisation points to the startlist dataframe
-    # new_columns = ['climber_spec','gc_spec','hills_spec','odr_spec','sprint_spec','tt_spec']
-    # for i,j in zip(new_columns,spec_points.columns):
-    #     startlist[i] = spec_points[j]
+    # Add the Procyclingstats specialisation points to the startlist dataframe
+    new_columns = ['climber_spec','gc_spec','hills_spec','odr_spec','sprint_spec','tt_spec']
+    for i,j in zip(new_columns,spec_points.columns):
+        startlist[i] = spec_points[j]
 
     # # # Define column names for the general startlist table
     column_names = ['pcs_gt_point_sum', 'pcs_stage_point_sum', 'uci_gt_point_sum', 'uci_stage_point_sum','startlist_quality_score_avg','top_tens_stages','top_tens_end_classification']
@@ -44,14 +45,15 @@ def main():
     avg_rider_proc_time = round(rider_proc_time/startlist.shape[0],3)
     
     print("""
-    
-    
-    
+
+
+
     -------- Processing Results --------
     """)
     # Upload all data tables to postgres
     upload_to_postgres('riders',startlist)
     upload_to_postgres('stages',stage_df)
+    update_stages_table()
     upload_to_postgres('stage_results',RIS_df)
     upload_to_postgres('class_results',RIC_df)
     print('')
@@ -62,8 +64,7 @@ def main():
     return
 
 def gather_results(startlist,column_names,table_size_dict):
-    
-    stage_df,RIS_df,RIC_df,table_size_dict = create_tables(startlist,column_names,table_size_dict,replace=False)
+    stage_df,RIS_df,RIC_df,table_size_dict = create_tables(startlist,column_names,table_size_dict,replace=True)
     nr_of_warnings = 0   
     rider_proc_time = 0
     # Get the latest results incrementally per rider    
@@ -78,7 +79,7 @@ def gather_results(startlist,column_names,table_size_dict):
         # Print the processing time of this iteration
         proc_t2 = round(time.time() - start_t2,2)
         rider_proc_time += proc_t2 
-        print(f'{rider_url}: took {proc_t2}s to process')   
+        print(f'{idx+1}/{startlist.shape[0]} - {rider_url}: took {proc_t2}s to process')   
     
     return startlist, stage_df, RIS_df, RIC_df, table_size_dict, rider_proc_time
 
@@ -87,18 +88,20 @@ def create_tables(startlist,column_names,table_size_dict,replace=False):
     for col in column_names:
         startlist[col] = None
 
-    stage_table_columns = ['stage_id','stage_url','stage_class','profile','profile_score','stage_type','is_one_day_race',
-                            'startlist_quality_score']
-    RIS_table_columns = ['rider_id','rider_url','stage_id','stage_url','finish_rank','pcs_points','uci_points','multiple_stage_race',
+    stage_table_columns = ['stage_url','date','stage_class','profile','profile_score','stage_type','is_one_day_race',
+                            'startlist_quality_score','gradient_final_km','profile_difficulty','final_km_difficulty']
+    RIS_table_columns = ['rider_id','rider_url','stage_url','finish_rank','pcs_points','uci_points','multiple_stage_race',
                             'gc_rank','points_rank','kom_rank','youth_rank','stage_scorito_points', 'jersey_scorito_points', 'team_scorito_points']
     RIC_table_columns = ['rider_id','rider_url','race_id','race_name','race_class','race_quality_score','gc_final_rank','points_final_rank',
                             'kom_final_rank','youth_final_rank','classification_scorito_points', 'team_scorito_points']
 
+    
+    # Initialize 3 dataframes, or load them from postgres
+    stage_df = pd.DataFrame(columns=stage_table_columns)
+    RIS_df = pd.DataFrame(columns=RIS_table_columns)
+    RIC_df = pd.DataFrame(columns=RIC_table_columns)
     if replace == True:
-        # Initialize 3 dataframes, or load them from postgres
-        stage_df = pd.DataFrame(columns=stage_table_columns)
-        RIS_df = pd.DataFrame(columns=RIS_table_columns)
-        RIC_df = pd.DataFrame(columns=RIC_table_columns)
+        pass
     elif replace == False:
         try:
             mock_stage_df = load_from_postgres('stages',None)

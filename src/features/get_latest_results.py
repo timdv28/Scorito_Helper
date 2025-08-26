@@ -36,7 +36,6 @@ def get_latest_results(startlist,rider_url,stage_df,RIS_df,RIC_df,nr_of_warnings
     for i in range(range_size):
         try:
             stage_url = rider_results[i]['stage_url']
-            print(stage_url)
             # Check if we are dealing with a single stage or with a classification
             if rider_results[i]['distance'] != None:  # ----- SINGLE STAGE -----
                 if (stage_df['stage_url'] == stage_url).any():
@@ -96,27 +95,26 @@ def get_latest_results(startlist,rider_url,stage_df,RIS_df,RIC_df,nr_of_warnings
             warnings.warn(f"Exception converted to warning:\n{tb}", stacklevel=2)
             nr_of_warnings += 1 
             
-        
+       
     return sums_and_averages,stage_df,RIS_df,RIC_df
 
 def add_stage_entry(i,stage_df,stage_url,rider_results):
     stage_cl = rider_results[i]['class']
-    if math.isnan(stage_df['stage_id'].max()) == False:
-        stage_id = stage_df['stage_id'].max() + 1
-    else:
-        stage_id = 20001
+    date = rider_results[i]['date']
         
     # Use the API to pull the stage information    
     stage = Stage(stage_url)
     profile = stage.profile_icon()
     profile_score = stage.profile_score()
+    
     stage_type = stage.stage_type()            
     is_one_day_race = stage.is_one_day_race()
-    startlist_quality_score = stage.race_startlist_quality_score()
+    startlist_quality_score = stage.race_startlist_quality_score()   
+    gradient_final_km = stage.gradient_final_km() 
     
     # Make a new stage row and append it the the stages dataframe
-    new_stage_row = [stage_id,stage_url,stage_cl,profile,profile_score,stage_type,
-                is_one_day_race,startlist_quality_score]
+    new_stage_row = [stage_url,date,stage_cl,profile,profile_score,stage_type,
+                is_one_day_race,startlist_quality_score,gradient_final_km,-1,-1]
     new_stage_row = pd.DataFrame([new_stage_row], columns=stage_df.columns.to_list())
     
     stage_df = stage_df._append(new_stage_row,ignore_index=True)
@@ -162,7 +160,6 @@ def pull_existing_class_results(rider_results,agg_dict,i):
 def add_rider_stage_results(rider_results,rider_url,startlist,stage_df,RIS_df,i,stage,agg_dict):
     rider_id = startlist.loc[startlist['rider_url']==rider_url]['rider_id'].iloc[0]
     stage_url = rider_results[i]['stage_url']
-    stage_id = stage_df.loc[stage_df['stage_url']==stage_url]['stage_id'].iloc[0]
     
     finish_rank = rider_results[i]['rank']
     pcs_points = int(rider_results[i]['pcs_points'])
@@ -195,8 +192,9 @@ def add_rider_stage_results(rider_results,rider_url,startlist,stage_df,RIS_df,i,
         kom_rank = -1
         youth_rank = -1
     
-    rider_in_stage_row = [rider_id,rider_url,stage_id,stage_url,finish_rank,pcs_points,uci_points,multiple_stage_race,
+    rider_in_stage_row = [rider_id,rider_url,stage_url,finish_rank,pcs_points,uci_points,multiple_stage_race,
                         gc_rank,points_rank,kom_rank,youth_rank,0,0,0]
+    rider_in_stage_row = [-1 if v is None else v for v in rider_in_stage_row]
     rider_in_stage_row = pd.DataFrame([rider_in_stage_row], columns=RIS_df.columns.to_list())
 
     # RIS_df = RIS_df._append(rider_in_stage_row,ignore_index=True)
@@ -274,6 +272,7 @@ def get_scorito_points(rider_results,rider_url,RIS_df,RIC_df,i,agg_dict,stage):
     
     if rider_results[i]['distance'] != None and (finish_rank not in ['DNF', 'DNS', None]):
         # Get the row in the stage result dataframe corresponding to this stage and rider, so we can use it to find the classification standings
+        
         row_condition = (RIS_df['stage_url']==stage_url) & (RIS_df['rider_url']==rider_url)
         result_row = RIS_df.loc[row_condition]   
         stage_points = pd.read_excel(filepath,sheet_name='stage_points')     
@@ -287,11 +286,29 @@ def get_scorito_points(rider_results,rider_url,RIS_df,RIC_df,i,agg_dict,stage):
                 RIS_df.loc[row_condition,'team_scorito_points'] = 10
 
         # Add the points for the gc, kom, points and youth standing if applicable
-        gc_rank = result_row['gc_rank'].iloc[0]
-        points_rank = result_row['points_rank'].iloc[0]
-        kom_rank = result_row['kom_rank'].iloc[0]
-        youth_rank = result_row['youth_rank'].iloc[0]
-              
+        if result_row['gc_rank'].iloc[0] is None:
+            gc_rank = -1
+        else:
+            gc_rank = float(result_row['gc_rank'].iloc[0])            
+            
+        if result_row['points_rank'].iloc[0] is None:    
+            points_rank = -1            
+        else:
+            points_rank = float(result_row['points_rank'].iloc[0])
+            
+        if result_row['kom_rank'].iloc[0] is None:
+            kom_rank = -1
+        else:
+            kom_rank = float(result_row['kom_rank'].iloc[0])
+        
+        if result_row['youth_rank'].iloc[0] is None:# == False and not math.isnan(result_row['youth_rank'].iloc[0]):
+            youth_rank = -1
+        else:
+            youth_rank = float(result_row['youth_rank'].iloc[0])
+        
+        # First make sure that the jersey point metric counts from zero
+        RIS_df.loc[row_condition,'jersey_scorito_points'] = 0
+        
         ### CLASSIFICATION STANDING AFTER THE STAGE ###
         if 1 <= gc_rank <= 5 and gc_rank is not None:
             gc_p = int(stage_points.loc[stage_points['finish_rank']==gc_rank]['gc'].iloc[0])
@@ -328,11 +345,31 @@ def get_scorito_points(rider_results,rider_url,RIS_df,RIC_df,i,agg_dict,stage):
         result_row = RIC_df.loc[row_condition]
         category = stage_url.split('/')[-1]
         
+        if result_row['gc_final_rank'].iloc[0] is None:
+            gc_final_rank = -1
+        else:
+            gc_final_rank = float(result_row['gc_final_rank'].iloc[0])            
+            
+        if result_row['points_final_rank'].iloc[0] is None:    
+            points_final_rank = -1            
+        else:
+            points_final_rank = float(result_row['points_final_rank'].iloc[0])
+            
+        if result_row['kom_final_rank'].iloc[0] is None:
+            kom_final_rank = -1
+        else:
+            kom_final_rank = float(result_row['kom_final_rank'].iloc[0])
+        
+        if result_row['youth_final_rank'].iloc[0] is None:# == False and not math.isnan(result_row['youth_rank'].iloc[0]):
+            youth_final_rank = -1
+        else:
+            youth_final_rank = float(result_row['youth_final_rank'].iloc[0])
+        
         # get the final rank of the classifications of this rider in this race
-        gc_final_rank = result_row['gc_final_rank'].iloc[0]
-        points_final_rank = result_row['points_final_rank'].iloc[0]
-        kom_final_rank = result_row['kom_final_rank'].iloc[0]
-        youth_final_rank = result_row['youth_final_rank'].iloc[0]
+        # gc_final_rank = float(result_row['gc_final_rank'].iloc[0])
+        # points_final_rank = float(result_row['points_final_rank'].iloc[0])
+        # kom_final_rank = float(result_row['kom_final_rank'].iloc[0])
+        # youth_final_rank = float(result_row['youth_final_rank'].iloc[0])
         
         # Only if there is a classification which earns points, then we will proceed. Otherwise, we skipt the entire step
         if (category == 'gc' and 1 <= gc_final_rank <= 20 and gc_final_rank is not None):
